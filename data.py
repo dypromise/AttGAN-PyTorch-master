@@ -61,7 +61,6 @@ class CelebA(data.Dataset):
             self.labels = labels[182637:]
 
         self.tf = transforms.Compose([
-            transforms.CenterCrop(170),
             transforms.Resize(image_size),
             transforms.ToTensor(),
             transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),

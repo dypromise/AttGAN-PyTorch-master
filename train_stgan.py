@@ -3,7 +3,7 @@
 # This work is licensed under the MIT License. To view a copy of this license,
 # visit https://opensource.org/licenses/MIT.
 
-"""Main entry point for training AttGAN network."""
+"""Main entry point for training STGAN network."""
 
 import argparse
 import datetime
@@ -15,7 +15,7 @@ import torch.utils.data as data
 
 import torch
 import torchvision.utils as vutils
-from attgan import AttGAN
+from stgan import STGAN
 from data import check_attribute_conflict
 from helpers import Progressbar, add_scalar_dict
 from tensorboardX import SummaryWriter
@@ -44,33 +44,16 @@ def parse(args=None):
 
     parser.add_argument('--img_size', dest='img_size', type=int, default=384)
     parser.add_argument('--shortcut_layers',
-                        dest='shortcut_layers', type=int, default=1)
-    parser.add_argument('--inject_layers',
-                        dest='inject_layers', type=int, default=0)
-    parser.add_argument('--enc_dim', dest='enc_dim', type=int, default=64)
-    parser.add_argument('--dec_dim', dest='dec_dim', type=int, default=64)
+                        dest='shortcut_layers', type=int, default=3)
+    parser.add_argument('--n_layers', dest='n_layers', type=int, default=5)
+    parser.add_argument('--conv_dim', dest='conv_dim', type=int, default=64)
     parser.add_argument('--dis_dim', dest='dis_dim', type=int, default=64)
     parser.add_argument('--dis_fc_dim', dest='dis_fc_dim',
                         type=int, default=1024)
-    parser.add_argument('--enc_layers', dest='enc_layers', type=int, default=5)
-    parser.add_argument('--dec_layers', dest='dec_layers', type=int, default=5)
     parser.add_argument('--dis_layers', dest='dis_layers', type=int, default=5)
-    parser.add_argument('--enc_norm', dest='enc_norm',
-                        type=str, default='batchnorm')
-    parser.add_argument('--dec_norm', dest='dec_norm',
-                        type=str, default='batchnorm')
-    parser.add_argument('--dis_norm', dest='dis_norm',
-                        type=str, default='instancenorm')
-    parser.add_argument('--dis_fc_norm', dest='dis_fc_norm',
-                        type=str, default='none')
-    parser.add_argument('--enc_acti', dest='enc_acti',
-                        type=str, default='lrelu')
-    parser.add_argument('--dec_acti', dest='dec_acti',
-                        type=str, default='relu')
-    parser.add_argument('--dis_acti', dest='dis_acti',
-                        type=str, default='lrelu')
-    parser.add_argument('--dis_fc_acti', dest='dis_fc_acti',
-                        type=str, default='relu')
+    parser.add_argument('--use_stu', type=bool, default=True)
+    parser.add_argument('--one_more_conv', type=int, default=0)
+    parser.add_argument('--stu_kernel_size', type=int, default=3)
     parser.add_argument('--lambda_1', dest='lambda_1',
                         type=float, default=100.0)
     parser.add_argument('--lambda_2', dest='lambda_2',
@@ -81,6 +64,8 @@ def parse(args=None):
 
     parser.add_argument('--mode', dest='mode', default='wgan',
                         choices=['wgan', 'lsgan', 'dcgan'])
+    parser.add_argument('--label', type=str, default='diff',
+                        choices=['diff', 'normal'])
     parser.add_argument('--epochs', dest='epochs', type=int,
                         default=200, help='# of epochs')
     parser.add_argument('--batch_size', dest='batch_size',
@@ -101,12 +86,12 @@ def parse(args=None):
                         type=float, default=0.5)
     parser.add_argument('--test_int', dest='test_int', type=float, default=1.0)
     parser.add_argument('--n_samples', dest='n_samples',
-                        type=int, default=16, help='# of sample images')
+                        type=int, default=24, help='# of sample images')
 
     parser.add_argument('--save_interval',
-                        dest='save_interval', type=int, default=1000)
+                        dest='save_interval', type=int, default=3000)
     parser.add_argument('--sample_interval',
-                        dest='sample_interval', type=int, default=1000)
+                        dest='sample_interval', type=int, default=3000)
     parser.add_argument('--gpu', dest='gpu', action='store_true')
     parser.add_argument('--multi_gpu', dest='multi_gpu', action='store_true')
     parser.add_argument('--experiment_name', dest='experiment_name',
@@ -154,7 +139,7 @@ valid_dataloader = data.DataLoader(
 print('Training images:', len(train_dataset), '/',
       'Validating images:', len(valid_dataset))
 
-attgan = AttGAN(args)
+stgan = STGAN(args)
 progressbar = Progressbar()
 writer = SummaryWriter(join('output', args.experiment_name, 'summary'))
 
@@ -175,10 +160,10 @@ for epoch in range(args.epochs):
     # train with base lr in the first 100 epochs
     # and half the lr in the last 100 epochs
     lr = args.lr_base / (10 ** (epoch // 100))
-    attgan.set_lr(lr)
+    stgan.set_lr(lr)
     writer.add_scalar('LR/learning_rate', lr, it + 1)
     for img_a, att_a in progressbar(train_dataloader):
-        attgan.train()
+        stgan.train()
 
         img_a = img_a.cuda() if args.gpu else img_a
         att_a = att_a.cuda() if args.gpu else att_a
@@ -200,11 +185,15 @@ for epoch in range(args.epochs):
                      (torch.fmod(torch.randn_like(att_b), 2) + 2) / 4.0 * \
                      (2 * args.thres_int)
 
+        if args.label == 'diff':
+            att_b_ = att_b_ - att_a_
+            att_a_ = att_a_ - att_a_
+
         if (it + 1) % (args.n_d + 1) != 0:
-            errD = attgan.trainD(img_a, att_a, att_a_, att_b, att_b_)
+            errD = stgan.trainD(img_a, att_a, att_a_, att_b, att_b_)
             add_scalar_dict(writer, errD, it + 1, 'D')
         else:
-            errG = attgan.trainG(img_a, att_a, att_a_, att_b, att_b_)
+            errG = stgan.trainG(img_a, att_a, att_a_, att_b, att_b_)
             add_scalar_dict(writer, errG, it + 1, 'G')
             progressbar.say(epoch=epoch, iter=it + 1,
                             d_loss=errD['d_loss'], g_loss=errG['g_loss'])
@@ -213,15 +202,16 @@ for epoch in range(args.epochs):
             # To save storage space, I only checkpoint the weights of G.
             # If you'd like to keep weights of G, D, optim_G, optim_D,
             # please use save() instead of saveG().
-            attgan.saveG(os.path.join(
-                'output', args.experiment_name, 'checkpoint', 'weights.{:d}.pth'.format(
-                    epoch)
-            ))
-            # attgan.save(os.path.join(
-            #     'output', args.experiment_name, 'checkpoint', 'weights.{:d}.pth'.format(epoch)
+            # stgan.saveG(os.path.join(
+            #     'output', args.experiment_name, 'checkpoint',
+            #     'weights.{:d}.pth'.format(epoch)
             # ))
+            stgan.save(os.path.join(
+                'output', args.experiment_name, 'checkpoint',
+                'weights.{:d}.pth'.format(epoch)
+            ))
         if (it + 1) % args.sample_interval == 0:
-            attgan.eval()
+            stgan.eval()
             with torch.no_grad():
                 samples = [fixed_img_a]
                 for i, att_b in enumerate(sample_att_b_list):
@@ -229,7 +219,7 @@ for epoch in range(args.epochs):
                     if i > 0:
                         att_b_[..., i - 1] = att_b_[..., i - 1] * \
                             args.test_int / args.thres_int
-                    samples.append(attgan.G(fixed_img_a, att_b_))
+                    samples.append(stgan.G(fixed_img_a, att_b_))
                 samples = torch.cat(samples, dim=3)
                 writer.add_image('sample', vutils.make_grid(
                     samples, nrow=1, normalize=True, range=(-1., 1.)), it + 1)
