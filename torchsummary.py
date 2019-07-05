@@ -11,48 +11,52 @@ class Logger():
     def __init__(self, silence=False):
         self.buffer = ''
         self.silence = silence
-    
+
     def __call__(self, *strings, end='\n'):
         if not self.silence:
             print(*strings, end=end)
         for string in strings:
             self.buffer += string + end
-        
+
     def __str__(self):
         return self.buffer
-    
+
     def get_logs(self):
         return str(self)
 
-def summary(model, input_size, batch_size=1, dtype=torch.float, use_gpu=False, return_str=False, forward_fn=None):
+
+def summary(model, input_size, batch_size=1, dtype=torch.float, use_gpu=False,
+            return_str=False, forward_fn=None):
     logger = Logger(return_str)
-    
+
     def register_hook(module):
         def hook(module, input, output):
             class_name = str(module.__class__).split('.')[-1].split("'")[0]
             module_idx = len(summary)
 
-            m_key = '%s-%i' % (class_name, module_idx+1)
+            m_key = '%s-%i' % (class_name, module_idx + 1)
             summary[m_key] = OrderedDict()
             summary[m_key]['input_shape'] = list(input[0].size())
             summary[m_key]['input_shape'][0] = -1
-            if isinstance(output, (list,tuple)):
-                summary[m_key]['output_shape'] = [[-1] + list(o.size())[1:] for o in output]
+            if isinstance(output, (list, tuple)):
+                summary[m_key]['output_shape'] = [
+                    [-1] + list(o.size())[1:] for o in output]
             else:
                 summary[m_key]['output_shape'] = list(output.size())
                 summary[m_key]['output_shape'][0] = -1
 
             params = 0
             if hasattr(module, 'weight'):
-                params += torch.prod(torch.LongTensor(list(module.weight.size())))
+                params += torch.prod(torch.LongTensor(
+                    list(module.weight.size())))
                 summary[m_key]['trainable'] = module.weight.requires_grad
             if hasattr(module, 'bias') and hasattr(module.bias, 'size'):
-                params +=  torch.prod(torch.LongTensor(list(module.bias.size())))
+                params += torch.prod(torch.LongTensor(
+                    list(module.bias.size())))
             summary[m_key]['nb_params'] = params
 
-        if (not isinstance(module, nn.Sequential) and 
-           not isinstance(module, nn.ModuleList) and 
-           not (module == model)):
+        if (not isinstance(module, nn.Sequential) and not isinstance(
+                module, nn.ModuleList) and not (module == model)):
             hooks.append(module.register_forward_hook(hook))
 
     def zero_tensor(*size, dtype=torch.float):
@@ -65,7 +69,8 @@ def summary(model, input_size, batch_size=1, dtype=torch.float, use_gpu=False, r
     if isinstance(input_size[0], (list, tuple)):
         if not isinstance(dtype, (list, tuple)):
             dtype = [dtype] * len(input_size)
-        x = [zero_tensor(batch_size, *in_size, dtype=dt) for in_size, dt in zip(input_size, dtype)]
+        x = [zero_tensor(batch_size, *in_size, dtype=dt)
+             for in_size, dt in zip(input_size, dtype)]
     else:
         x = zero_tensor(batch_size, *input_size, dtype=dtype)
 
@@ -92,14 +97,16 @@ def summary(model, input_size, batch_size=1, dtype=torch.float, use_gpu=False, r
         h.remove()
 
     logger('---------------------------------------------------------------------')
-    line_new = '{:>20}  {:>30} {:>15}'.format('Layer (type)', 'Output Shape', 'Param #')
+    line_new = '{:>20}  {:>30} {:>15}'.format(
+        'Layer (type)', 'Output Shape', 'Param #')
     logger(line_new)
     logger('=====================================================================')
     total_params = 0
     trainable_params = 0
     for layer in summary:
         # input_shape, output_shape, trainable, nb_params
-        line_new = '{:>20}  {:>30} {:>15}'.format(layer, str(summary[layer]['output_shape']), summary[layer]['nb_params'])
+        line_new = '{:>20}  {:>30} {:>15}'.format(layer, str(
+            summary[layer]['output_shape']), summary[layer]['nb_params'])
         total_params += summary[layer]['nb_params']
         if 'trainable' in summary[layer]:
             if summary[layer]['trainable'] == True:
